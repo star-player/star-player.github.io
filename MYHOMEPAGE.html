@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>케이스 정리 도구</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: sans-serif; background: #f4f4f4; margin: 0; padding: 0; }
+    nav { background: #333; color: white; padding: 10px; display: flex; gap: 15px; }
+    nav a { color: white; text-decoration: none; cursor: pointer; }
+    .page { display: none; padding: 20px; }
+    .active { display: block; }
+    textarea { width: 100%; height: 200px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; background: white; }
+    th, td { border: 1px solid #ccc; padding: 8px; }
+    th:nth-child(n+2), td:nth-child(n+2) { text-align: center; }
+    thead th { background-color: #f0f0f0; }
+    .highlight { background-color: #fff8b3; cursor: help; }
+    button { margin: 5px 0; padding: 8px 12px; width: 220px; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .shortcut-container { display: flex; gap: 0; }
+    .shortcut-group { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; padding: 0 10px; }
+    .divider { width: 2px; background: #ccc; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a onclick="showPage('parser')">데이터 정리</a>
+  <a onclick="showPage('shortcuts')">바로가기</a>
+</nav>
+
+<div id="parser" class="page active">
+  <h2>📋 데이터 정리</h2>
+  <textarea id="rawText" placeholder="여기에 케이스 복붙하세요..."></textarea><br>
+  <button onclick="processText()">정리하기</button>
+  <button onclick="downloadExcel()">엑셀로 저장</button>
+
+  <table id="resultTable">
+    <thead>
+      <tr>
+        <th>케이스 제목</th>
+        <th>요청 ID</th>
+        <th>심각도</th>
+        <th>만든 날짜</th>
+        <th>Age</th>
+        <th>마지막 업데이트</th>
+        <th>제품</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<div id="shortcuts" class="page">
+  <h2>🚀 바로가기</h2>
+  <div class="shortcut-container">
+    <div class="shortcut-group">
+      <button onclick="window.open('https://engagehub.microsoft.com/#view/Microsoft_AzureCXP_EngageHub/EngageHubMenuBlade/~/selfHelp', '_blank')">
+        On-premises 케이스 만들기
+      </button>
+      <button onclick="window.open('https://portal.azure.com/', '_blank')">
+        Azure Portal
+      </button>
+      <button onclick="window.open('https://lynx.office.net/incidents', '_blank')">
+        LYNX Incident 확인
+      </button>
+    </div>
+    <div class="divider"></div>
+    <div class="shortcut-group">
+      <button onclick="window.open('https://b2b.officedepot.co.kr/htm/main/main_main.asp', '_blank')">
+        명함 신청
+      </button>
+      <button onclick="window.open('https://microsoftapc.sharepoint.com/teams/REFKoreaSR/SitePages/Parking-%EC%95%88%EB%82%B4.aspx?csf=1&web=1&share=EaPaaa-SHnNEmsom_RToX38BSQdARwoH2LvvD06KEgsxHw&e=e5l1KK&CID=8172409e-1e7b-44ce-a85e-dd55314d3d27', '_blank')">
+        주차 신청
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const caseList = [];
+
+  function showPage(id) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  function processText() {
+    const text = document.getElementById("rawText").value;
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const tbody = document.querySelector("#resultTable tbody");
+    tbody.innerHTML = '';
+    caseList.length = 0;
+
+    let current = {};
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      if (line.endsWith('')) {
+        if (current.title) {
+          caseList.push(current);
+          addRow(current);
+          current = {};
+        }
+        current.title = line.replace('', '').trim();
+      } else if (line.startsWith('요청 ID:') && lines[i + 1]) {
+        current.id = lines[i + 1].trim();
+      } else if (line.startsWith('심각도:') && lines[i + 1]) {
+        current.severity = lines[i + 1].trim().charAt(0);
+      } else if (line.startsWith('만든 날짜:') && lines[i + 1]) {
+        const rawDate = lines[i + 1].trim();
+        const formatted = parseKoreanDate(rawDate);
+        current.date = formatted.display;
+        current.age = formatted.age;
+      } else if (line.startsWith('제품:') && lines[i + 1]) {
+        current.product = lines[i + 1].trim();
+      } else if (line === '열기' && lines[i - 1]) {
+        const updatedRaw = lines[i - 1].trim();
+        const formatted = parseKoreanDate(updatedRaw);
+        current.lastUpdated = formatted.display;
+        current.lastUpdatedDays = formatted.diffDays;
+      }
+    }
+    if (current.title) {
+      caseList.push(current);
+      addRow(current);
+    }
+  }
+
+  function parseKoreanDate(koreanDateStr) {
+    const regex = /(\d{4})년 (\d{1,2})월 (\d{1,2})일 .* (오전|오후) (\d{1,2}):(\d{2})/;
+    const match = koreanDateStr.match(regex);
+    if (!match) return { display: '', age: '', diffDays: null };
+
+    let [ , year, month, day, ampm, hour, minute ] = match;
+    hour = parseInt(hour);
+    if (ampm === '오후' && hour !== 12) hour += 12;
+    if (ampm === '오전' && hour === 12) hour = 0;
+
+    const date = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${hour.toString().padStart(2, '0')}:${minute}`);
+    const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
+    const weekday = weekdays[date.getDay()];
+    const today = new Date();
+    const diffDays = Math.floor((today - date) / (1000 * 60 * 60 * 24));
+    const display = `${year}/${month.padStart(2, '0')}/${day.padStart(2, '0')} ${hour.toString().padStart(2, '0')}:${minute}(${weekday})`;
+
+    return { display, age: `${diffDays}일`, diffDays };
+  }
+
+  function addRow(data) {
+    const row = document.createElement("tr");
+    const lastUpdatedClass = data.lastUpdatedDays >= 5 ? 'highlight' : '';
+    const tooltip = data.lastUpdatedDays >= 5 ? `title="${data.lastUpdatedDays}일 경과"` : '';
+    row.innerHTML = `
+      <td>${data.title}</td>
+      <td>${data.id || ''}</td>
+      <td>${data.severity || ''}</td>
+      <td>${data.date || ''}</td>
+      <td>${data.age || ''}</td>
+      <td class="${lastUpdatedClass}" ${tooltip}>${data.lastUpdated || ''}</td>
+      <td>${data.product || ''}</td>
+    `;
+    document.querySelector("#resultTable tbody").appendChild(row);
+  }
+
+  function downloadExcel() {
+    const wb = XLSX.utils.book_new();
+    const ws_data = [
+      ["케이스 제목", "요청 ID", "심각도", "만든 날짜", "Age", "마지막 업데이트", "제품"],
+      ...caseList.map(c => [c.title, c.id, c.severity, c.date, c.age, c.lastUpdated, c.product])
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(ws_data);
+    XLSX.utils.book_append_sheet(wb, ws, "Cases");
+    XLSX.writeFile(wb, "cases.xlsx");
+  }
+</script>
+</body>
+</html>
